@@ -136,7 +136,77 @@
     }
     .btn-secondary:hover { background: #21262d; }
 
+    .btn-run {
+      background: #1a3a5c;
+      color: #58a6ff;
+      border-color: #2d5f8a;
+    }
+    .btn-run:hover { background: #1f4a73; }
+    .btn-run:disabled { background: #21262d; color: var(--muted); border-color: var(--border); cursor: not-allowed; }
+
     .char-count { margin-left: auto; font-size: 12px; color: var(--muted); }
+
+    /* 실행 탭 스타일 */
+    .run-output {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      padding: 20px;
+      gap: 12px;
+    }
+    .run-meta {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .run-status {
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .run-block {
+      background: #010409;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .run-block-header {
+      padding: 8px 14px;
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--muted);
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+      display: flex;
+      justify-content: space-between;
+    }
+    .run-block pre {
+      padding: 14px;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-all;
+      min-height: 48px;
+      color: #e6edf3;
+    }
+    .run-block pre.stderr { color: #f85149; }
+    .stdin-wrap { display: flex; flex-direction: column; gap: 6px; }
+    .stdin-wrap label { font-size: 12px; color: var(--muted); }
+    textarea#stdin-input {
+      background: #010409;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      padding: 10px 14px;
+      resize: vertical;
+      min-height: 52px;
+      outline: none;
+    }
+    textarea#stdin-input:focus { border-color: var(--blue); }
 
     /* ───── 오른쪽 패널 ───── */
     .right-panel {
@@ -355,6 +425,7 @@
     <div class="action-bar">
       <button class="btn-secondary" id="quick-btn" onclick="quickCheck()">⚡ 빠른 확인</button>
       <button class="btn-primary" id="review-btn" onclick="fullReview()">🔍 전체 AI 검토</button>
+      <button class="btn-run" id="run-btn" onclick="runCode()">▶ 실행</button>
       <span class="char-count" id="char-count">0자</span>
     </div>
   </div>
@@ -363,6 +434,7 @@
   <div class="right-panel">
     <div class="tabs">
       <div class="tab active" onclick="switchTab('result')">결과</div>
+      <div class="tab" onclick="switchTab('run')">▶ 실행</div>
       <div class="tab" onclick="switchTab('history')">히스토리</div>
     </div>
 
@@ -391,6 +463,23 @@
       </div>
     </div>
 
+    <!-- 실행 탭 -->
+    <div id="tab-run" class="tab-content">
+      <div class="run-output">
+        <div class="stdin-wrap">
+          <label>표준 입력 (stdin) — input() 사용 시 여기에 입력값을 입력하세요</label>
+          <textarea id="stdin-input" placeholder="입력값이 없으면 비워두세요"></textarea>
+        </div>
+        <div id="run-result-area">
+          <div class="empty-state" style="padding: 40px 0;">
+            <div class="icon">▶</div>
+            <p>▶ 실행 버튼을 눌러주세요</p>
+            <p style="font-size:12px;">Python, C 언어 지원</p>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 히스토리 탭 -->
     <div id="tab-history" class="tab-content">
       <div class="history-list" id="history-list">
@@ -405,9 +494,10 @@
 
 <script>
 // ──────────────────── 탭 ────────────────────
+const TAB_NAMES = ['result', 'run', 'history'];
 function switchTab(name) {
-  document.querySelectorAll('.tab').forEach((t,i) => {
-    t.classList.toggle('active', ['result','history'][i] === name);
+  document.querySelectorAll('.tab').forEach((t, i) => {
+    t.classList.toggle('active', TAB_NAMES[i] === name);
   });
   document.querySelectorAll('.tab-content[id^="tab-"]').forEach(c => {
     c.classList.toggle('active', c.id === `tab-${name}`);
@@ -440,11 +530,79 @@ function stopLoadingSteps() {
   document.querySelectorAll('.step-item').forEach(s => s.className = 'step-item done');
 }
 
+// ──────────────────── 코드 실행 ────────────────────
+async function runCode() {
+  const code = codeInput.value.trim();
+  if (!code) { alert('코드를 입력해주세요.'); return; }
+
+  // 실행 탭으로 즉시 전환
+  switchTab('run');
+
+  const lang = document.getElementById('lang-select').value;
+  const stdinVal = document.getElementById('stdin-input').value;
+  const area = document.getElementById('run-result-area');
+
+  // 로딩 표시
+  area.innerHTML = `
+    <div style="display:flex;align-items:center;gap:12px;padding:20px 0;color:var(--muted);">
+      <div class="spinner" style="width:24px;height:24px;border-width:2px;"></div>
+      <span>코드 실행 중...</span>
+    </div>`;
+
+  document.getElementById('run-btn').disabled = true;
+
+  try {
+    const fd = new FormData();
+    fd.append('code', code);
+    fd.append('language', lang);
+    fd.append('stdin_input', stdinVal);
+    const res = await fetch('/api/run', { method: 'POST', body: fd });
+    const data = await res.json();
+    renderRunResult(data);
+  } catch(e) {
+    area.innerHTML = `<p style="color:var(--red);padding:20px 0;">❌ 실행 실패: ${e.message}</p>`;
+  } finally {
+    document.getElementById('run-btn').disabled = false;
+  }
+}
+
+function renderRunResult(data) {
+  const area = document.getElementById('run-result-area');
+  const statusColor = data.returncode === 0 ? 'var(--green)' : 'var(--red)';
+  const elapsedBadge = data.elapsed !== undefined
+    ? `<span style="margin-left:auto;">⏱ ${data.elapsed}s</span>` : '';
+
+  area.innerHTML = `
+    <div class="run-meta">
+      <span class="run-status" style="color:${statusColor};">${data.message || ''}</span>
+      ${elapsedBadge}
+    </div>
+
+    <div class="run-block">
+      <div class="run-block-header">
+        <span>📤 stdout (출력)</span>
+        ${data.returncode === 0 ? '<span style="color:var(--green);">정상 종료</span>' : ''}
+      </div>
+      <pre>${escHtml(data.stdout) || '<span style="color:var(--muted);">출력 없음</span>'}</pre>
+    </div>
+
+    ${data.stderr ? `
+    <div class="run-block">
+      <div class="run-block-header">
+        <span>⚠️ stderr (오류)</span>
+        <span style="color:var(--red);">returncode: ${data.returncode}</span>
+      </div>
+      <pre class="stderr">${escHtml(data.stderr)}</pre>
+    </div>` : ''}
+  `;
+}
+
 // ──────────────────── 빠른 확인 ────────────────────
 async function quickCheck() {
   const code = codeInput.value.trim();
   if (!code) { alert('코드를 입력해주세요.'); return; }
 
+  switchTab('result');
   showLoading(false);
   const lang = document.getElementById('lang-select').value;
 
@@ -467,6 +625,7 @@ async function fullReview() {
   const code = codeInput.value.trim();
   if (!code) { alert('코드를 입력해주세요.'); return; }
 
+  switchTab('result');
   showLoading(true);
   const lang = document.getElementById('lang-select').value;
 
@@ -540,12 +699,18 @@ function renderQuickResult(data) {
     issuesHtml = '<p style="color:var(--green);">✅ 정적 분석에서 이슈가 발견되지 않았습니다.</p>';
   }
 
+  const fixHint = data.total_issues > 0 ? `
+    <div style="margin-top:12px;padding:10px 14px;background:#1a1f2e;border:1px solid #2d3748;border-radius:6px;font-size:12px;color:var(--muted);">
+      💡 <strong style="color:var(--blue);">전체 AI 검토</strong>를 누르면 각 문제의 구체적인 수정 방법과 우선순위 가이드를 확인할 수 있습니다.
+    </div>` : '';
+
   body.innerHTML = `
     <div class="section-card">
       <div class="section-header">⚡ 빠른 정적 분석 결과</div>
       <div class="section-body">
         ${pills}
         ${issuesHtml}
+        ${fixHint}
       </div>
     </div>`;
 }
@@ -617,6 +782,18 @@ function renderFullResult(data) {
     machine_learning:{ icon: '🧬', label: 'AI / 머신러닝' },
   };
 
+  // 수정 가이드 카드 (최상단에 배치)
+  const fixGuide = data.ai_review && data.ai_review.fix_guide ? `
+    <div class="section-card" style="border-color:#2d3a1e;">
+      <div class="section-header" onclick="toggleSection(this)" style="background:#1a2210;">
+        <span>🛠️ 수정 가이드</span>
+        <span style="font-size:11px;color:var(--muted);margin-left:auto;">우선순위별 수정 항목 ▾</span>
+      </div>
+      <div class="section-body">
+        <pre class="ai-text" style="color:#c9d1d9;">${escHtml(data.ai_review.fix_guide)}</pre>
+      </div>
+    </div>` : '';
+
   const aiCards = Object.entries(reviews).map(([key, val]) => {
     const meta = reviewKeys[key] || { icon: '🔍', label: key };
     return `
@@ -635,7 +812,7 @@ function renderFullResult(data) {
       </div>`;
   }).join('');
 
-  body.innerHTML = scoreCard + staticHtml + aiCards;
+  body.innerHTML = scoreCard + fixGuide + staticHtml + aiCards;
 }
 
 // ──────────────────── 히스토리 ────────────────────
