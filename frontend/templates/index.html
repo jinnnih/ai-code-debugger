@@ -1,0 +1,788 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>AI 디버깅 도구</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --text: #e6edf3;
+      --muted: #8b949e;
+      --green: #3fb950;
+      --yellow: #d29922;
+      --red: #f85149;
+      --blue: #58a6ff;
+      --purple: #bc8cff;
+      --orange: #ffa657;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Segoe UI', system-ui, sans-serif;
+      min-height: 100vh;
+    }
+
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    header h1 { font-size: 20px; font-weight: 700; }
+    header span { font-size: 13px; color: var(--muted); }
+    .badge {
+      background: #1f4f3b;
+      color: var(--green);
+      border: 1px solid #2ea04326;
+      font-size: 11px;
+      padding: 2px 8px;
+      border-radius: 20px;
+      font-weight: 600;
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 0;
+      height: calc(100vh - 61px);
+    }
+
+    /* ───── 왼쪽 패널 ───── */
+    .left-panel {
+      border-right: 1px solid var(--border);
+      display: flex;
+      flex-direction: column;
+    }
+
+    .panel-header {
+      padding: 14px 20px;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--surface);
+    }
+    .panel-header h2 { font-size: 14px; font-weight: 600; }
+
+    .controls {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+    }
+
+    select {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 6px 10px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    textarea#code-input {
+      flex: 1;
+      background: var(--bg);
+      border: none;
+      color: #e6edf3;
+      font-family: 'Courier New', monospace;
+      font-size: 13px;
+      line-height: 1.6;
+      padding: 20px;
+      resize: none;
+      outline: none;
+      tab-size: 4;
+    }
+    textarea#code-input::placeholder { color: #484f58; }
+
+    .action-bar {
+      padding: 12px 20px;
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
+    button {
+      padding: 8px 18px;
+      border-radius: 6px;
+      border: 1px solid transparent;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .btn-primary {
+      background: #238636;
+      color: #fff;
+      border-color: #2ea043;
+    }
+    .btn-primary:hover { background: #2ea043; }
+    .btn-primary:disabled { background: #21262d; color: var(--muted); border-color: var(--border); cursor: not-allowed; }
+
+    .btn-secondary {
+      background: transparent;
+      color: var(--text);
+      border-color: var(--border);
+    }
+    .btn-secondary:hover { background: #21262d; }
+
+    .char-count { margin-left: auto; font-size: 12px; color: var(--muted); }
+
+    /* ───── 오른쪽 패널 ───── */
+    .right-panel {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .tabs {
+      display: flex;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+    }
+    .tab {
+      padding: 12px 20px;
+      font-size: 13px;
+      color: var(--muted);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s;
+      user-select: none;
+    }
+    .tab:hover { color: var(--text); }
+    .tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+
+    .tab-content { display: none; flex: 1; overflow-y: auto; }
+    .tab-content.active { display: flex; flex-direction: column; }
+
+    /* 기다리는 빈 화면 */
+    .empty-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      color: var(--muted);
+    }
+    .empty-state .icon { font-size: 48px; }
+    .empty-state p { font-size: 14px; text-align: center; }
+
+    /* 로딩 */
+    .loading-state {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 20px;
+    }
+    .spinner {
+      width: 40px;
+      height: 40px;
+      border: 3px solid var(--border);
+      border-top-color: var(--blue);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .step-list { list-style: none; display: flex; flex-direction: column; gap: 10px; }
+    .step-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+      color: var(--muted);
+      transition: color 0.3s;
+    }
+    .step-item.done { color: var(--green); }
+    .step-item.active { color: var(--blue); }
+    .step-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--border);
+      transition: background 0.3s;
+    }
+    .step-item.done .step-dot { background: var(--green); }
+    .step-item.active .step-dot { background: var(--blue); animation: pulse 1s ease-in-out infinite; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.4} }
+
+    /* 결과 */
+    .result-body { padding: 20px; display: flex; flex-direction: column; gap: 16px; }
+
+    .score-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 16px 20px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    .score-card .label { font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+    .score-card .value { font-size: 18px; font-weight: 700; }
+
+    .section-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .section-header {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      font-size: 13px;
+      font-weight: 600;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .section-header:hover { background: #21262d; }
+    .section-body { padding: 16px; font-size: 13px; line-height: 1.7; color: #c9d1d9; }
+    .section-body.hidden { display: none; }
+
+    .issue-item {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--border);
+      border-radius: 6px;
+      padding: 10px 14px;
+      margin-bottom: 8px;
+      font-size: 12px;
+    }
+    .issue-item.critical { border-left-color: var(--red); }
+    .issue-item.warning { border-left-color: var(--yellow); }
+    .issue-item.info { border-left-color: var(--blue); }
+    .issue-type { font-weight: 700; margin-bottom: 4px; }
+    .issue-critical .issue-type { color: var(--red); }
+    .issue-warning .issue-type { color: var(--yellow); }
+    .issue-info .issue-type { color: var(--blue); }
+
+    pre.ai-text {
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-family: 'Segoe UI', sans-serif;
+      font-size: 13px;
+      line-height: 1.7;
+    }
+
+    .double-check-box {
+      background: #1a1f2e;
+      border: 1px solid #2d3748;
+      border-radius: 6px;
+      padding: 12px;
+      margin-top: 12px;
+    }
+    .double-check-box .dclabel {
+      font-size: 11px;
+      font-weight: 700;
+      color: var(--purple);
+      margin-bottom: 8px;
+    }
+
+    .pills { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+    .pill {
+      font-size: 11px;
+      padding: 3px 10px;
+      border-radius: 20px;
+      font-weight: 600;
+    }
+    .pill-red { background: #3d1919; color: var(--red); border: 1px solid #5a2020; }
+    .pill-yellow { background: #3d2e00; color: var(--yellow); border: 1px solid #5a4500; }
+    .pill-blue { background: #0d2137; color: var(--blue); border: 1px solid #1a3f5e; }
+
+    /* 히스토리 탭 */
+    .history-list { padding: 16px; display: flex; flex-direction: column; gap: 10px; }
+    .history-item {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 12px 16px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .history-item:hover { background: #21262d; }
+    .history-item .hname { font-size: 13px; font-weight: 600; }
+    .history-item .hmeta { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+  </style>
+</head>
+<body>
+
+<header>
+  <span style="font-size:22px;">🔍</span>
+  <h1>AI 디버깅 도구</h1>
+  <div class="badge">Beta v1.0</div>
+  <span style="margin-left:auto;">꼼꼼한 다중 코드 검토 시스템</span>
+</header>
+
+<div class="layout">
+  <!-- ─────────── 왼쪽: 코드 입력 ─────────── -->
+  <div class="left-panel">
+    <div class="panel-header">
+      <h2>코드 입력</h2>
+      <div class="controls">
+        <select id="lang-select">
+          <option value="python">Python</option>
+          <option value="c">C 언어</option>
+          <option value="java">Spring Boot (Java)</option>
+          <option value="cpp">C++</option>
+          <option value="ros">ROS (Python)</option>
+          <option value="javascript">JavaScript</option>
+          <option value="kotlin">Android (Kotlin)</option>
+        </select>
+        <button class="btn-secondary" onclick="loadSample()">예제 코드</button>
+      </div>
+    </div>
+
+    <textarea id="code-input" placeholder="여기에 코드를 붙여넣으세요...&#10;&#10;지원 언어: Python, C, Java(Spring Boot), C++, ROS, JavaScript, Android(Kotlin)&#10;&#10;Tip: '예제 코드' 버튼으로 샘플을 불러올 수 있습니다."></textarea>
+
+    <div class="action-bar">
+      <button class="btn-secondary" id="quick-btn" onclick="quickCheck()">⚡ 빠른 확인</button>
+      <button class="btn-primary" id="review-btn" onclick="fullReview()">🔍 전체 AI 검토</button>
+      <span class="char-count" id="char-count">0자</span>
+    </div>
+  </div>
+
+  <!-- ─────────── 오른쪽: 결과 패널 ─────────── -->
+  <div class="right-panel">
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('result')">결과</div>
+      <div class="tab" onclick="switchTab('history')">히스토리</div>
+    </div>
+
+    <!-- 결과 탭 -->
+    <div id="tab-result" class="tab-content active">
+      <div class="empty-state" id="empty-state">
+        <div class="icon">🤖</div>
+        <p>코드를 입력하고<br/>검토 버튼을 눌러주세요</p>
+        <p style="font-size:12px;">4가지 관점 + ROS/OpenCV/ML 특화 검토</p>
+      </div>
+
+      <div class="loading-state" id="loading-state" style="display:none;">
+        <div class="spinner"></div>
+        <ul class="step-list" id="step-list">
+          <li class="step-item" id="step1"><div class="step-dot"></div>정적 분석 수행 중...</li>
+          <li class="step-item" id="step2"><div class="step-dot"></div>버그 & 보안 검토 중...</li>
+          <li class="step-item" id="step3"><div class="step-dot"></div>성능 분석 중...</li>
+          <li class="step-item" id="step4"><div class="step-dot"></div>Best Practices 검토 중...</li>
+          <li class="step-item" id="step5"><div class="step-dot"></div>논리 검증 중...</li>
+          <li class="step-item" id="step6"><div class="step-dot"></div>특화 영역 검토 중...</li>
+        </ul>
+      </div>
+
+      <div id="result-state" class="tab-content" style="display:none; flex:1; overflow-y:auto;">
+        <div class="result-body" id="result-body"></div>
+      </div>
+    </div>
+
+    <!-- 히스토리 탭 -->
+    <div id="tab-history" class="tab-content">
+      <div class="history-list" id="history-list">
+        <div class="empty-state" style="padding:40px 0;">
+          <div class="icon">📋</div>
+          <p>아직 검토 이력이 없습니다</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ──────────────────── 탭 ────────────────────
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach((t,i) => {
+    t.classList.toggle('active', ['result','history'][i] === name);
+  });
+  document.querySelectorAll('.tab-content[id^="tab-"]').forEach(c => {
+    c.classList.toggle('active', c.id === `tab-${name}`);
+  });
+  if (name === 'history') loadHistory();
+}
+
+// ──────────────────── 글자 수 ────────────────────
+const codeInput = document.getElementById('code-input');
+codeInput.addEventListener('input', () => {
+  document.getElementById('char-count').textContent = `${codeInput.value.length.toLocaleString()}자`;
+});
+
+// ──────────────────── 로딩 스텝 ────────────────────
+let stepTimer;
+function startLoadingSteps(full = true) {
+  const steps = document.querySelectorAll('.step-item');
+  steps.forEach(s => s.className = 'step-item');
+  let idx = 0;
+  const maxStep = full ? steps.length : 1;
+  stepTimer = setInterval(() => {
+    if (idx > 0) steps[idx-1].className = 'step-item done';
+    if (idx < maxStep) { steps[idx].className = 'step-item active'; idx++; }
+    else clearInterval(stepTimer);
+  }, full ? 3000 : 800);
+}
+
+function stopLoadingSteps() {
+  clearInterval(stepTimer);
+  document.querySelectorAll('.step-item').forEach(s => s.className = 'step-item done');
+}
+
+// ──────────────────── 빠른 확인 ────────────────────
+async function quickCheck() {
+  const code = codeInput.value.trim();
+  if (!code) { alert('코드를 입력해주세요.'); return; }
+
+  showLoading(false);
+  const lang = document.getElementById('lang-select').value;
+
+  try {
+    const fd = new FormData();
+    fd.append('code', code);
+    fd.append('language', lang);
+    const res = await fetch('/api/quick-check', { method: 'POST', body: fd });
+    const data = await res.json();
+    stopLoadingSteps();
+    renderQuickResult(data);
+  } catch(e) {
+    stopLoadingSteps();
+    showError(e.message);
+  }
+}
+
+// ──────────────────── 전체 AI 검토 ────────────────────
+async function fullReview() {
+  const code = codeInput.value.trim();
+  if (!code) { alert('코드를 입력해주세요.'); return; }
+
+  showLoading(true);
+  const lang = document.getElementById('lang-select').value;
+
+  try {
+    const fd = new FormData();
+    fd.append('code', code);
+    fd.append('language', lang);
+    fd.append('filename', `review_${lang}`);
+    const res = await fetch('/api/review', { method: 'POST', body: fd });
+    if (!res.ok) {
+      const err = await res.json();
+      throw new Error(err.detail || '서버 오류');
+    }
+    const data = await res.json();
+    stopLoadingSteps();
+    renderFullResult(data);
+  } catch(e) {
+    stopLoadingSteps();
+    showError(e.message);
+  }
+}
+
+// ──────────────────── 상태 전환 ────────────────────
+function showLoading(full = true) {
+  document.getElementById('empty-state').style.display = 'none';
+  document.getElementById('loading-state').style.display = 'flex';
+  document.getElementById('result-state').style.display = 'none';
+  startLoadingSteps(full);
+  document.getElementById('review-btn').disabled = true;
+  document.getElementById('quick-btn').disabled = true;
+}
+
+function showResult() {
+  document.getElementById('empty-state').style.display = 'none';
+  document.getElementById('loading-state').style.display = 'none';
+  document.getElementById('result-state').style.display = 'flex';
+  document.getElementById('review-btn').disabled = false;
+  document.getElementById('quick-btn').disabled = false;
+}
+
+function showError(msg) {
+  document.getElementById('loading-state').style.display = 'none';
+  document.getElementById('empty-state').style.display = 'flex';
+  document.getElementById('empty-state').innerHTML = `<div class="icon">❌</div><p>${msg}</p>`;
+  document.getElementById('review-btn').disabled = false;
+  document.getElementById('quick-btn').disabled = false;
+}
+
+// ──────────────────── 렌더: 빠른 확인 ────────────────────
+function renderQuickResult(data) {
+  showResult();
+  const body = document.getElementById('result-body');
+
+  const severities = data.severity_breakdown || {};
+  const pills = `
+    <div class="pills">
+      ${severities.critical ? `<span class="pill pill-red">🔴 Critical ${severities.critical}</span>` : ''}
+      ${severities.warning  ? `<span class="pill pill-yellow">🟡 Warning ${severities.warning}</span>` : ''}
+      ${severities.info     ? `<span class="pill pill-blue">🔵 Info ${severities.info}</span>` : ''}
+      ${!data.total_issues  ? `<span class="pill" style="background:#1f4f3b;color:#3fb950;border:1px solid #2ea04326;">✅ 이슈 없음</span>` : ''}
+    </div>`;
+
+  let issuesHtml = '';
+  if (data.issues && data.issues.length) {
+    issuesHtml = data.issues.map(i => `
+      <div class="issue-item ${i.severity} issue-${i.severity}">
+        <div class="issue-type">${severityEmoji(i.severity)} [${i.type}]</div>
+        <div>${i.message}</div>
+      </div>`).join('');
+  } else {
+    issuesHtml = '<p style="color:var(--green);">✅ 정적 분석에서 이슈가 발견되지 않았습니다.</p>';
+  }
+
+  body.innerHTML = `
+    <div class="section-card">
+      <div class="section-header">⚡ 빠른 정적 분석 결과</div>
+      <div class="section-body">
+        ${pills}
+        ${issuesHtml}
+      </div>
+    </div>`;
+}
+
+// ──────────────────── 렌더: 전체 결과 ────────────────────
+function renderFullResult(data) {
+  showResult();
+  const body = document.getElementById('result-body');
+
+  // 점수 카드
+  const scoreCard = `
+    <div class="score-card">
+      <div>
+        <div class="label">종합 평가</div>
+        <div class="value">${data.overall_score || '-'}</div>
+      </div>
+      <div style="text-align:right;">
+        <div class="label">언어</div>
+        <div class="value" style="font-size:15px;">${data.language}</div>
+      </div>
+    </div>`;
+
+  // 정적 분석 카드
+  let staticHtml = '';
+  const sa = data.static_analysis;
+  if (sa && sa.status === 'success') {
+    const sb = sa.severity_breakdown || {};
+    const pills = `
+      <div class="pills">
+        ${sb.critical ? `<span class="pill pill-red">🔴 Critical ${sb.critical}</span>` : ''}
+        ${sb.warning  ? `<span class="pill pill-yellow">🟡 Warning ${sb.warning}</span>` : ''}
+        ${sb.info     ? `<span class="pill pill-blue">🔵 Info ${sb.info}</span>` : ''}
+        ${!sa.total_issues ? `<span class="pill" style="background:#1f4f3b;color:#3fb950;border:1px solid #2ea04326;">✅ 이슈 없음</span>` : ''}
+      </div>`;
+    const issues = (sa.issues || []).map(i => `
+      <div class="issue-item ${i.severity} issue-${i.severity}">
+        <div class="issue-type">${severityEmoji(i.severity)} ${i.type}</div>
+        <div>${i.message}</div>
+      </div>`).join('') || '<p style="color:var(--green)">이슈 없음</p>';
+    staticHtml = `
+      <div class="section-card">
+        <div class="section-header" onclick="toggleSection(this)">
+          📊 정적 분석 <span style="margin-left:auto;font-size:11px;color:var(--muted);">총 ${sa.total_issues}건 ▾</span>
+        </div>
+        <div class="section-body">${pills}${issues}</div>
+      </div>`;
+  } else if (sa && sa.status === 'syntax_error') {
+    staticHtml = `
+      <div class="section-card">
+        <div class="section-header">📊 정적 분석</div>
+        <div class="section-body">
+          <div class="issue-item critical issue-critical">
+            <div class="issue-type">🔴 문법 오류 — 라인 ${sa.line}</div>
+            <div>${sa.error}</div>
+          </div>
+        </div>
+      </div>`;
+  }
+
+  // AI 검토 카드
+  const reviews = (data.ai_review && data.ai_review.reviews) || {};
+  const reviewKeys = {
+    bug_security:    { icon: '🐛', label: '버그 & 보안' },
+    performance:     { icon: '⚡', label: '성능 분석' },
+    best_practices:  { icon: '📐', label: 'Best Practices' },
+    logic_validation:{ icon: '🧠', label: '논리 검증' },
+    ros_robotics:    { icon: '🤖', label: 'ROS / 자율주행' },
+    computer_vision: { icon: '👁️', label: 'OpenCV / 영상처리' },
+    machine_learning:{ icon: '🧬', label: 'AI / 머신러닝' },
+  };
+
+  const aiCards = Object.entries(reviews).map(([key, val]) => {
+    const meta = reviewKeys[key] || { icon: '🔍', label: key };
+    return `
+      <div class="section-card">
+        <div class="section-header" onclick="toggleSection(this)">
+          ${meta.icon} ${meta.label} <span style="margin-left:auto;font-size:11px;color:var(--muted);">▾</span>
+        </div>
+        <div class="section-body">
+          <pre class="ai-text">${escHtml(val.review || '')}</pre>
+          ${val.double_check ? `
+            <div class="double-check-box">
+              <div class="dclabel">🔎 더블 체크 결과</div>
+              <pre class="ai-text">${escHtml(val.double_check)}</pre>
+            </div>` : ''}
+        </div>
+      </div>`;
+  }).join('');
+
+  body.innerHTML = scoreCard + staticHtml + aiCards;
+}
+
+// ──────────────────── 히스토리 ────────────────────
+async function loadHistory() {
+  try {
+    const res = await fetch('/api/results');
+    const items = await res.json();
+    const list = document.getElementById('history-list');
+    if (!items.length) return;
+    list.innerHTML = items.map(i => `
+      <div class="history-item" onclick="loadResultFile('${i.file}')">
+        <div class="hname">📄 ${i.filename || i.file}</div>
+        <div class="hmeta">${i.language} · ${new Date(i.timestamp).toLocaleString('ko-KR')} · ${i.overall_score || ''}</div>
+      </div>`).join('');
+  } catch(e) { /* ignore */ }
+}
+
+async function loadResultFile(file) {
+  switchTab('result');
+  try {
+    const res = await fetch(`/api/results/${file}`);
+    const data = await res.json();
+    renderFullResult(data);
+  } catch(e) { showError('결과를 불러오지 못했습니다.'); }
+}
+
+// ──────────────────── 유틸 ────────────────────
+function toggleSection(header) {
+  const body = header.nextElementSibling;
+  body.classList.toggle('hidden');
+}
+
+function escHtml(text) {
+  return text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+function severityEmoji(s) {
+  return s === 'critical' ? '🔴' : s === 'warning' ? '🟡' : '🔵';
+}
+
+// ──────────────────── 예제 코드 ────────────────────
+const samples = {
+  python: `import os
+
+def calculate_average(numbers):
+    total = 0
+    unused_var = "this is unused"
+    for n in numbers:
+        total = total + n
+    result = total / len(numbers)  # 빈 리스트면 ZeroDivisionError!
+    return result
+
+def read_user_input():
+    user_data = input("파일 경로 입력: ")
+    content = eval(user_data)  # 보안 위험!
+    return content
+
+def process_data(data):
+    try:
+        result = risky_operation(data)
+    except:
+        pass  # 예외 무시
+    return result
+
+numbers = [1, 2, 3, 4, 5]
+print(calculate_average(numbers))`,
+
+  c: `#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+void get_username() {
+    char buffer[10];
+    gets(buffer);  // 버퍼 오버플로우 위험!
+    printf("Hello, %s\\n", buffer);
+}
+
+int* create_array(int size) {
+    int* arr = (int*)malloc(size * sizeof(int));
+    // NULL 체크 없음!
+    for (int i = 0; i < size; i++) {
+        arr[i] = i;
+    }
+    return arr;  // free() 하지 않으면 메모리 누수!
+}
+
+int main() {
+    get_username();
+    int* data = create_array(100);
+    // free(data); 누락!
+    return 0;
+}`,
+
+  java: `@RestController
+@RequestMapping("/api")
+public class UserController {
+
+    @Autowired
+    private UserRepository userRepository;
+
+    @GetMapping("/user")
+    public User getUser(String userId) {
+        // SQL Injection 위험!
+        String query = "SELECT * FROM users WHERE id = " + userId;
+        return userRepository.findByQuery(query);
+    }
+
+    @PostMapping("/user")
+    public void saveUser(@RequestBody User user) {
+        // @Transactional 없음!
+        userRepository.save(user);
+        sendWelcomeEmail(user.getEmail());
+    }
+}`,
+
+  ros: `#!/usr/bin/env python3
+import rospy
+from geometry_msgs.msg import Twist
+from sensor_msgs.msg import LaserScan
+
+class ObstacleAvoider:
+    def __init__(self):
+        rospy.init_node('obstacle_avoider')
+        self.pub = rospy.Publisher('/cmd_vel', Twist, queue_size=10)
+        self.sub = rospy.Subscriber('/scan', LaserScan, self.scan_callback)
+        self.min_distance = 0.5
+
+    def scan_callback(self, data):
+        # 앞쪽 데이터만 확인
+        front = min(data.ranges[0:30] + data.ranges[330:360])
+        twist = Twist()
+        if front < self.min_distance:
+            twist.angular.z = 0.5  # 회전
+        else:
+            twist.linear.x = 0.3   # 직진
+        self.pub.publish(twist)
+
+if __name__ == '__main__':
+    node = ObstacleAvoider()
+    rospy.spin()`
+};
+
+function loadSample() {
+  const lang = document.getElementById('lang-select').value;
+  codeInput.value = samples[lang] || samples.python;
+  document.getElementById('char-count').textContent = `${codeInput.value.length.toLocaleString()}자`;
+}
+</script>
+</body>
+</html>
