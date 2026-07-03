@@ -1,5 +1,8 @@
 """AI 디버깅 도구 - FastAPI 백엔드"""
 import os
+import subprocess
+import tempfile
+import sys
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
@@ -156,6 +159,106 @@ async def get_result(result_file: str):
 
     with open(result_path, 'r', encoding='utf-8') as f:
         return JSONResponse(content=json.load(f))
+
+
+@app.post("/api/run")
+async def run_code(
+    code: str = Form(...),
+    language: str = Form(default="python"),
+    stdin_input: str = Form(default="")
+):
+    """코드 실행 API - Python / C 지원"""
+    try:
+        if language == "python" or language == "ros":
+            result = _run_python(code, stdin_input)
+        elif language == "c":
+            result = _run_c(code, stdin_input)
+        else:
+            result = {
+                "stdout": "",
+                "stderr": "",
+                "returncode": -1,
+                "message": f"⚠️ {language} 실행은 현재 지원하지 않습니다. (Python, C 지원)",
+                "elapsed": 0
+            }
+        return JSONResponse(content=result)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def _run_python(code: str, stdin_input: str) -> dict:
+    """Python 코드 실행 (타임아웃 10초)"""
+    import time
+    with tempfile.NamedTemporaryFile(suffix=".py", mode="w", delete=False, encoding="utf-8") as f:
+        f.write(code)
+        tmp_path = f.name
+    try:
+        start = time.time()
+        proc = subprocess.run(
+            [sys.executable, tmp_path],
+            input=stdin_input,
+            capture_output=True,
+            text=True,
+            timeout=10
+        )
+        elapsed = round(time.time() - start, 3)
+        return {
+            "stdout": proc.stdout,
+            "stderr": proc.stderr,
+            "returncode": proc.returncode,
+            "elapsed": elapsed,
+            "message": "✅ 실행 완료" if proc.returncode == 0 else "❌ 오류 발생"
+        }
+    except subprocess.TimeoutExpired:
+        return {"stdout": "", "stderr": "⏱️ 실행 시간 초과 (10초 제한)", "returncode": -1, "elapsed": 10, "message": "⏱️ 시간 초과"}
+    finally:
+        os.unlink(tmp_path)
+
+
+def _run_c(code: str, stdin_input: str) -> dict:
+    """C 코드 컴파일 후 실행"""
+    import time
+    with tempfile.NamedTemporaryFile(suffix=".c", mode="w", delete=False, encoding="utf-8") as f:
+        f.write(code)
+        src_path = f.name
+    out_path = src_path.replace(".c", "")
+    try:
+        # 컴파일
+        compile_proc = subprocess.run(
+            ["gcc", src_path, "-o", out_path, "-lm"],
+            capture_output=True, text=True, timeout=15
+        )
+        if compile_proc.returncode != 0:
+            return {
+                "stdout": "",
+                "stderr": compile_proc.stderr,
+                "returncode": compile_proc.returncode,
+                "elapsed": 0,
+                "message": "❌ 컴파일 오류"
+            }
+        # 실행
+        start = time.time()
+        proc = subprocess.run(
+            [out_path],
+            input=stdin_input,
+            capture_output=True, text=True, timeout=10
+        )
+        elapsed = round(time.time() - start, 3)
+        return {
+            "stdout": proc.stdout,
+            "stderr": proc.stderr,
+            "returncode": proc.returncode,
+            "elapsed": elapsed,
+            "message": "✅ 실행 완료" if proc.returncode == 0 else "❌ 오류 발생"
+        }
+    except subprocess.TimeoutExpired:
+        return {"stdout": "", "stderr": "⏱️ 실행 시간 초과 (10초 제한)", "returncode": -1, "elapsed": 10, "message": "⏱️ 시간 초과"}
+    except FileNotFoundError:
+        return {"stdout": "", "stderr": "gcc가 설치되어 있지 않습니다.", "returncode": -1, "elapsed": 0, "message": "❌ gcc 없음"}
+    finally:
+        os.unlink(src_path)
+        if os.path.exists(out_path):
+            os.unlink(out_path)
 
 
 @app.get("/api/health")
